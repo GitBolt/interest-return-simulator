@@ -9,7 +9,7 @@ use clockwork_sdk::state::{Thread, ThreadAccount};
 declare_id!("5mP16ymxF7Ac2hw85oAzCJUUnu9deUvYTyWhaQ4M7H39");
 
 // Calculating interest per minute instead of anually for faster results
-const MINUTE_INTEREST: f64 = 0.05; // 2.5% interest return
+const MINUTE_INTEREST: f64 = 0.05; // 5% interest return
 const CRON_SCHEDULE: &str = "*/10 * * * * * *"; // 10s https://crontab.guru/
 const AUTOMATION_FEE: f64 = 0.05;  // https://docs.clockwork.xyz/developers/threads/fees
 
@@ -27,7 +27,6 @@ pub mod bank {
         holder_name: String,
         balance: f64,
     ) -> Result<()> {
-        // Accounts
         let system_program = &ctx.accounts.system_program;
         let clockwork_program = &ctx.accounts.clockwork_program;
 
@@ -37,7 +36,6 @@ pub mod bank {
         let thread = &ctx.accounts.thread;
         let thread_authority = &ctx.accounts.thread_authority;
 
-        // Assigning init data
         bank_account.thread_id = thread_id.clone();
         bank_account.holder = *holder.key;
         bank_account.balance = balance;
@@ -112,13 +110,11 @@ pub mod bank {
     }
 
     pub fn remove_interest(ctx: Context<Reset>) -> Result<()> {
-        // Accounts
         let clockwork_program = &ctx.accounts.clockwork_program;
         let holder = &ctx.accounts.holder;
         let thread = &ctx.accounts.thread;
         let thread_authority = &ctx.accounts.thread_authority;
 
-        // Delete thread via CPI
         let bump = *ctx.bumps.get("thread_authority").unwrap();
         clockwork_sdk::cpi::thread_delete(CpiContext::new_with_signer(
             clockwork_program.to_account_info(),
@@ -140,7 +136,6 @@ pub mod bank {
 #[derive(Accounts)]
 #[instruction(thread_id: Vec<u8>)]
 pub struct Initialize<'info> {
-    /// The counter account to initialize.
     #[account(
         init,
         payer = holder,
@@ -150,22 +145,18 @@ pub struct Initialize<'info> {
     )]
     pub bank_account: Account<'info, BankAccount>,
 
-    /// The Clockwork thread program.
     #[account(address = clockwork_sdk::ID)]
     pub clockwork_program: Program<'info, clockwork_sdk::ThreadProgram>,
 
     #[account(mut)]
     pub holder: Signer<'info>,
 
-    /// The Solana system program.
     #[account(address = system_program::ID)]
     pub system_program: Program<'info, System>,
 
-    /// Address to assign to the newly created thread.
     #[account(mut, address = Thread::pubkey(thread_authority.key(), thread_id))]
     pub thread: SystemAccount<'info>,
 
-    /// The pda that will own and manage the thread.
     #[account(seeds = [THREAD_AUTHORITY_SEED], bump)]
     pub thread_authority: SystemAccount<'info>,
 }
@@ -206,23 +197,18 @@ pub struct DeleteAccount<'info> {
 
 #[derive(Accounts)]
 pub struct Reset<'info> {
-    /// The signer.
     #[account(mut)]
     pub holder: Signer<'info>,
 
-    /// The Clockwork thread program.
     #[account(address = clockwork_sdk::ID)]
     pub clockwork_program: Program<'info, clockwork_sdk::ThreadProgram>,
 
-    /// The thread to reset.
     #[account(mut, address = thread.pubkey(), constraint = thread.authority.eq(&thread_authority.key()))]
     pub thread: Account<'info, Thread>,
 
-    /// The pda that owns and manages the thread.
     #[account(seeds = [THREAD_AUTHORITY_SEED], bump)]
     pub thread_authority: SystemAccount<'info>,
 
-    /// Close the counter account
     #[account(
         mut,
         seeds = [BANK_ACCOUNT_SEED],
