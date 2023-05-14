@@ -1,8 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{self};
-use anchor_lang::solana_program::{
-    instruction::Instruction, native_token::LAMPORTS_PER_SOL, system_program,
-};
+use anchor_lang::solana_program::{instruction::Instruction, native_token::LAMPORTS_PER_SOL};
 use anchor_lang::InstructionData;
 use clockwork_sdk::state::{Thread, ThreadAccount};
 
@@ -11,11 +8,10 @@ declare_id!("5mP16ymxF7Ac2hw85oAzCJUUnu9deUvYTyWhaQ4M7H39");
 // Calculating interest per minute instead of anually for faster results
 const MINUTE_INTEREST: f64 = 0.05; // 5% interest return
 const CRON_SCHEDULE: &str = "*/10 * * * * * *"; // 10s https://crontab.guru/
-const AUTOMATION_FEE: f64 = 0.05;  // https://docs.clockwork.xyz/developers/threads/fees
+const AUTOMATION_FEE: f64 = 0.05; // https://docs.clockwork.xyz/developers/threads/fees
 
 pub const BANK_ACCOUNT_SEED: &[u8] = b"bank_account";
 pub const THREAD_AUTHORITY_SEED: &[u8] = b"authority";
-
 
 #[program]
 pub mod bank {
@@ -86,11 +82,28 @@ pub mod bank {
         Ok(())
     }
 
+    pub fn deposit(ctx: Context<UpdateBalance>, _thread_id: Vec<u8>, amount: f64) -> Result<()> {
+        if amount < 0.0 {
+            return Err(error!(ErrorCode::AmountTooSmall));
+        };
 
-    pub fn add_interest(
-        ctx: Context<AddInterest>,
-        _thread_id: Vec<u8>,
-    ) -> Result<()> {
+        let bank_account = &mut ctx.accounts.bank_account;
+        bank_account.balance += amount;
+        Ok(())
+    }
+
+    pub fn withdraw(ctx: Context<UpdateBalance>, _thread_id: Vec<u8>, amount: f64) -> Result<()> {
+        let bank_account = &mut ctx.accounts.bank_account;
+
+        if amount > bank_account.balance {
+            return Err(error!(ErrorCode::AmountTooBig));
+        };
+
+        bank_account.balance -= amount;
+        Ok(())
+    }
+
+    pub fn add_interest(ctx: Context<AddInterest>, _thread_id: Vec<u8>) -> Result<()> {
         let now = Clock::get().unwrap().unix_timestamp;
 
         let bank_account = &mut ctx.accounts.bank_account;
@@ -110,11 +123,13 @@ pub mod bank {
     }
 
     pub fn remove_interest(ctx: Context<Reset>) -> Result<()> {
+        // Accounts
         let clockwork_program = &ctx.accounts.clockwork_program;
         let holder = &ctx.accounts.holder;
         let thread = &ctx.accounts.thread;
         let thread_authority = &ctx.accounts.thread_authority;
 
+        // Delete thread via CPI
         let bump = *ctx.bumps.get("thread_authority").unwrap();
         clockwork_sdk::cpi::thread_delete(CpiContext::new_with_signer(
             clockwork_program.to_account_info(),
@@ -127,15 +142,14 @@ pub mod bank {
         ))?;
         Ok(())
     }
-
-    pub fn delete(_ctx: Context<DeleteAccount>, _thread_id: Vec<u8>) -> Result<()> {
-        Ok(())
-    }
 }
 
 #[derive(Accounts)]
 #[instruction(thread_id: Vec<u8>)]
 pub struct Initialize<'info> {
+    #[account(mut)]
+    pub holder: Signer<'info>,
+
     #[account(
         init,
         payer = holder,
@@ -145,26 +159,35 @@ pub struct Initialize<'info> {
     )]
     pub bank_account: Account<'info, BankAccount>,
 
-    #[account(address = clockwork_sdk::ID)]
-    pub clockwork_program: Program<'info, clockwork_sdk::ThreadProgram>,
-
-    #[account(mut)]
-    pub holder: Signer<'info>,
-
-    #[account(address = system_program::ID)]
-    pub system_program: Program<'info, System>,
-
     #[account(mut, address = Thread::pubkey(thread_authority.key(), thread_id))]
     pub thread: SystemAccount<'info>,
 
     #[account(seeds = [THREAD_AUTHORITY_SEED], bump)]
     pub thread_authority: SystemAccount<'info>,
+
+    #[account(address = clockwork_sdk::ID)]
+    pub clockwork_program: Program<'info, clockwork_sdk::ThreadProgram>,
+
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-#[instruction(_thread_id: Vec<u8>)]
+#[instruction(thread_id: Vec<u8>)]
+pub struct UpdateBalance<'info> {
+    #[account(mut)]
+    pub holder: Signer<'info>,
+
+    #[account(mut, seeds = [BANK_ACCOUNT_SEED, thread_id.as_ref()], bump)]
+    pub bank_account: Account<'info, BankAccount>,
+
+    // Misc Accounts
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(thread_id: Vec<u8>)]
 pub struct AddInterest<'info> {
-    #[account(mut, seeds = [BANK_ACCOUNT_SEED, _thread_id.as_ref()], bump)]
+    #[account(mut, seeds = [BANK_ACCOUNT_SEED, thread_id.as_ref()], bump)]
     pub bank_account: Account<'info, BankAccount>,
 
     #[account(signer, constraint = thread.authority.eq(&thread_authority.key()))]
@@ -175,47 +198,27 @@ pub struct AddInterest<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(_thread_id : Vec<u8>)]
-pub struct DeleteAccount<'info> {
+#[instruction(thread_id : Vec<u8>)]
+pub struct Reset<'info> {
     #[account(mut)]
     pub holder: Signer<'info>,
 
     #[account(
         mut,
-        close = holder,
-        seeds = [BANK_ACCOUNT_SEED, _thread_id.as_ref()],
-        bump=bank_account.bump
+        seeds = [BANK_ACCOUNT_SEED, thread_id.as_ref()],
+        bump,
+        close = holder
     )]
     pub bank_account: Account<'info, BankAccount>,
-
-    // Misc Accounts
-    #[account(address = system_program::ID)]
-    pub system_program: Program<'info, System>,
-    #[account(address = solana_program::sysvar::rent::ID)]
-    pub rent: Sysvar<'info, Rent>,
-}
-
-#[derive(Accounts)]
-pub struct Reset<'info> {
-    #[account(mut)]
-    pub holder: Signer<'info>,
-
-    #[account(address = clockwork_sdk::ID)]
-    pub clockwork_program: Program<'info, clockwork_sdk::ThreadProgram>,
-
+    
     #[account(mut, address = thread.pubkey(), constraint = thread.authority.eq(&thread_authority.key()))]
     pub thread: Account<'info, Thread>,
 
     #[account(seeds = [THREAD_AUTHORITY_SEED], bump)]
     pub thread_authority: SystemAccount<'info>,
 
-    #[account(
-        mut,
-        seeds = [BANK_ACCOUNT_SEED],
-        bump,
-        close = holder
-    )]
-    pub bank_account: Account<'info, BankAccount>,
+    #[account(address = clockwork_sdk::ID)]
+    pub clockwork_program: Program<'info, clockwork_sdk::ThreadProgram>,
 }
 
 #[account]
@@ -227,5 +230,13 @@ pub struct BankAccount {
     pub created_at: i64,
     pub updated_at: i64,
     pub thread_id: Vec<u8>,
-    pub bump: u8,
+}
+
+#[error_code]
+pub enum ErrorCode {
+    #[msg("Amount must be greater than zero")]
+    AmountTooSmall,
+
+    #[msg("Withdraw amount cannot be less than deposit")]
+    AmountTooBig,
 }
