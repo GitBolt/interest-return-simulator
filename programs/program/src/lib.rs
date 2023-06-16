@@ -3,18 +3,18 @@ use anchor_lang::solana_program::{instruction::Instruction, native_token::LAMPOR
 use anchor_lang::InstructionData;
 use clockwork_sdk::state::{Thread, ThreadAccount};
 
-declare_id!("5mP16ymxF7Ac2hw85oAzCJUUnu9deUvYTyWhaQ4M7H39");
+declare_id!("B8Gwgafr5U1zn57i4KC1vr8z74qRJgXuZsbZeZYD3nTg");
 
 // Calculating interest per minute instead of anually for faster results
 const MINUTE_INTEREST: f64 = 0.05; // 5% interest return
 const CRON_SCHEDULE: &str = "*/10 * * * * * *"; // 10s https://crontab.guru/
-const AUTOMATION_FEE: f64 = 0.05; // https://docs.clockwork.xyz/developers/threads/fees
+const AUTOMATION_FEE: u64 = 5000000; // https://docs.clockwork.xyz/developers/threads/fees
 
 pub const BANK_ACCOUNT_SEED: &[u8] = b"bank_account";
 pub const THREAD_AUTHORITY_SEED: &[u8] = b"authority";
 
 #[program]
-pub mod bank {
+pub mod bank_simulator {
     use super::*;
 
     pub fn initialize_account(
@@ -45,10 +45,12 @@ pub mod bank {
                 bank_account: bank_account.key(),
                 thread: thread.key(),
                 thread_authority: thread_authority.key(),
-            }.to_account_metas(Some(true)),
+            }
+            .to_account_metas(Some(true)),
             data: crate::instruction::AddInterest {
                 _thread_id: thread_id.clone(),
-            }.data(),
+            }
+            .data(),
         };
 
         // Clockwork Trigger
@@ -70,7 +72,7 @@ pub mod bank {
                 },
                 &[&[THREAD_AUTHORITY_SEED, &[bump]]],
             ),
-            (AUTOMATION_FEE * LAMPORTS_PER_SOL as f64) as u64,
+            AUTOMATION_FEE,
             thread_id,
             vec![target_ix.into()],
             trigger,
